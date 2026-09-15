@@ -41,6 +41,38 @@ async function insertFeed(url: string): Promise<number> {
 }
 
 describe('ingest', () => {
+  it.each([3600, 54981.818181818184])(
+    'keeps fetching after loading interval %s',
+    async (interval) => {
+      const now = 1_756_857_600
+      // Eleven weekly articles is the smallest count that produces fractional seconds.
+      const items = Array.from(
+        { length: 11 },
+        (_, i) =>
+          `<item><title>Article ${i}</title><guid>article-${i}</guid><pubDate>${new Date(now * 1000).toUTCString()}</pubDate><description>Body</description></item>`,
+      ).join('')
+      const rss = `<rss version="2.0"><channel><title>Feed</title><link>https://example.com/</link>${items}</channel></rss>`
+      await withFetch(
+        async () => new Response(rss, { headers: { 'Content-Type': 'application/rss+xml' } }),
+        async () => {
+          const feedId = await insertFeed(`https://example.com/interval-${interval}.xml`)
+          await env.DB.prepare('UPDATE feeds SET fetch_interval_sec = ? WHERE id = ?')
+            .bind(interval, feedId)
+            .run()
+          const first = await ingestFeed(env, feedId, { force: false, now })
+          expect(first.inserted).toBe(11)
+          const second = await ingestFeed(env, feedId, { force: false, now: now + 54982 })
+          expect(second.outcome).toBe('unchanged')
+          const row = await env.DB.prepare(
+            'SELECT fetch_interval_sec, last_fetch_at FROM feeds WHERE id = ?',
+          )
+            .bind(feedId)
+            .first()
+          expect(row).toEqual({ fetch_interval_sec: 54982, last_fetch_at: now + 54982 })
+        },
+      )
+    },
+  )
   it('ingests a fixture twice without duplicating rows, marks old items read, and keeps counters', async () => {
     const original = globalThis.fetch
     globalThis.fetch = async () =>
