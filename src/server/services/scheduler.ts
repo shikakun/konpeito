@@ -22,7 +22,7 @@ export function nextIntervalSec(input: IntervalInput): number {
     input.expiresInSec ?? 0,
     input.retryAfterSec ?? 0,
   )
-  return Math.min(Math.max(base, delay), day)
+  return Math.ceil(Math.min(Math.max(base, delay), day))
 }
 
 export function backoffSec(errorCount: number, retryAfterSec: number | null): number {

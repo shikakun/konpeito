@@ -43,7 +43,8 @@ const feedRowSchema = z.object({
   last_modified: z.string().nullable(),
   body_hash: z.string().nullable(),
   no_cache: z.number().int(),
-  fetch_interval_sec: z.number().int(),
+  // Accept fractional intervals stored by earlier versions until the next successful fetch.
+  fetch_interval_sec: z.number(),
   last_success_at: z.number().int().nullable(),
   last_error_kind: z.string().nullable(),
   error_count: z.number().int(),
@@ -252,9 +253,14 @@ export async function ingestFeed(
     .bind(feedId)
     .all()
   addMeta(counters, feedResult.meta)
-  const feedParsed = feedRowSchema.safeParse(feedResult.results[0])
-  if (!feedParsed.success) {
+  const row = feedResult.results[0]
+  if (row === undefined) {
     throw new Error(`feed ${feedId} not found`)
+  }
+  const feedParsed = feedRowSchema.safeParse(row)
+  if (!feedParsed.success) {
+    const fields = feedParsed.error.issues.map((issue) => issue.path.join('.')).join(', ')
+    throw new Error(`feed ${feedId} has invalid fields: ${fields}`)
   }
   const feed = feedParsed.data
   const requestUrl = feed.effective_url ?? feed.feed_url
