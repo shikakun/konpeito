@@ -1,6 +1,6 @@
 {
   "name": "@shikakun/konpeito",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "A self-hosted feed reader for Cloudflare Workers and D1",
   "license": "MIT",
   "repository": "github:shikakun/konpeito",

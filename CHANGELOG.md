@@ -1,5 +1,11 @@
 # @shikakun/konpeito
 
+## 0.2.1
+
+### Patch Changes
+
+- [#8](https://github.com/shikakun/konpeito/pull/8) [`f68d27b`](https://github.com/shikakun/konpeito/commit/f68d27bd4d2754d3a77119627f9137bc4f6e9b43) Thanks [@asonas](https://github.com/asonas)! - フィードの取得間隔に小数が保存されて記事が取得できなくなる問題を修正した
+
 ## 0.2.0
 
 ### Minor Changes
