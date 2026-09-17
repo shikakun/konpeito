@@ -22,11 +22,9 @@ import { cn } from '../../lib/utils.ts'
 import { SafeHtml } from '../SafeHtml.tsx'
 import { Button } from '../ui/button.tsx'
 import { ColumnHeader, useScrolled } from '../ui/column-header.tsx'
-import { AppContextMenu, ContextMenuTrigger } from '../ui/context-menu.tsx'
 import { ExternalIconLink, IconLink } from '../ui/icon-button.tsx'
 import { ImageLightbox } from '../ui/lightbox.tsx'
 import { AppTooltip } from '../ui/tooltip.tsx'
-import { ArticleContextItems, articleMenuLabels } from './ArticleMenu.tsx'
 
 export function ItemView(props: {
   itemRef: string | undefined
@@ -109,15 +107,6 @@ export function ItemView(props: {
     }
   }
 
-  const labels = articleMenuLabels(
-    {
-      isRead: item.is_read,
-      isBookmarked: item.is_bookmarked,
-      fullContentShown: props.fullContent.shown,
-      hasUrl: item.url !== null,
-    },
-    t,
-  )
   const article = (
     <article
       ref={props.articleRef}
@@ -241,23 +230,7 @@ export function ItemView(props: {
 
   return (
     <>
-      <AppContextMenu
-        menu={
-          <ArticleContextItems
-            {...labels}
-            onToggleRead={() => props.onToggleRead(item)}
-            onToggleBookmark={() => props.onToggleBookmark(item)}
-            onToggleFullContent={props.fullContent.toggle}
-            onOpenOriginal={() => {
-              if (item.url) {
-                window.open(item.url, '_blank', 'noopener,noreferrer')
-              }
-            }}
-          />
-        }
-      >
-        <ContextMenuTrigger className="contents">{article}</ContextMenuTrigger>
-      </AppContextMenu>
+      {article}
       <ImageLightbox src={lightbox} onClose={() => setLightbox(null)} />
     </>
   )
