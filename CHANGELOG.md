@@ -1,5 +1,11 @@
 # @shikakun/konpeito
 
+## 0.2.2
+
+### Patch Changes
+
+- [#10](https://github.com/shikakun/konpeito/pull/10) [`33639e1`](https://github.com/shikakun/konpeito/commit/33639e1a757955036049f050f052b254bdc16952) Thanks [@shikakun](https://github.com/shikakun)! - 記事のコンテンツのエリアではブラウザのコンテキストメニューを表示するようにした
+
 ## 0.2.1
 
 ### Patch Changes
