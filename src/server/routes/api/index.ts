@@ -587,7 +587,8 @@ export const api = new Hono<AppEnv>()
     return c.json({ ok: true })
   })
   .get('/sessions', async (c) => {
-    const current = c.get('session')
+    const auth = c.get('auth')
+    const currentId = auth.kind === 'session' ? auth.session.id : null
     const rows = await c.env.DB.prepare(
       'SELECT id, created_at, expires_at, last_seen_at, user_agent FROM sessions ORDER BY last_seen_at DESC',
     ).all<{
@@ -600,7 +601,7 @@ export const api = new Hono<AppEnv>()
     return c.json({
       sessions: rows.results.map((row) => ({
         ...row,
-        current: row.id === current.id,
+        current: row.id === currentId,
       })),
     })
   })

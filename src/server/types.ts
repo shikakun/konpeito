@@ -1,9 +1,13 @@
 import type { SessionRow } from './middleware/session.ts'
 
+export type AuthContext =
+  | { kind: 'session'; session: SessionRow }
+  | { kind: 'token'; tokenId: number }
+
 export type AppEnv = {
   Bindings: Env
   Variables: {
-    session: SessionRow
+    auth: AuthContext
     rowId: number
   }
 }

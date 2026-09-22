@@ -3,17 +3,12 @@ import { feedTitle } from '../../../shared/feed.ts'
 import { cursorPayloadSchema } from '../../../shared/schemas.ts'
 import { getFeed, insertFeed, listFeeds, replaceFeedTags } from '../../db/queries/feeds.ts'
 import { setItemsBookmarked, setItemsRead } from '../../db/queries/items.ts'
-import {
-  decodeCursorBytes,
-  encodeCursor,
-  nowSec,
-  sha256Hex,
-  timingSafeEqual,
-} from '../../lib/crypto.ts'
+import { findApiToken, googleLoginToken } from '../../lib/api-token.ts'
+import { decodeCursorBytes, encodeCursor, nowSec } from '../../lib/crypto.ts'
 import { enqueueFeed } from '../../lib/enqueue.ts'
 import { placeholders } from '../../lib/ids.ts'
 import { signedIconQuery } from '../../lib/image-proxy.ts'
-import { rateLimitAuth } from '../../middleware/rate-limit.ts'
+import { consumeAuthLimit, rateLimitAuth } from '../../middleware/rate-limit.ts'
 import type { AppEnv } from '../../types.ts'
 import {
   formatItemId,
@@ -27,60 +22,22 @@ import {
 import { absolutizeImageProxyUrls } from './urls.ts'
 
 const GREADER_TOKEN = 'reader-token'
-const SLIDE_AFTER_SEC = 60 * 60
 
-type TokenRow = {
-  id: number
-  secret_hash: string
-  last_used_at: number | null
-  revoked_at: number | null
-}
-
-async function findToken(db: D1Database, secret: string): Promise<TokenRow | null> {
-  const hash = sha256Hex(secret)
-  const row = await db
-    .prepare(
-      'SELECT id, secret_hash, last_used_at, revoked_at FROM api_tokens WHERE secret_hash = ? AND revoked_at IS NULL',
-    )
-    .bind(hash)
-    .first<TokenRow>()
-  if (!row) {
-    return null
+async function rejectUnauthorized(c: Context<AppEnv>) {
+  if (!(await consumeAuthLimit(c))) {
+    return c.text('Too Many Requests', 429)
   }
-  if (!timingSafeEqual(row.secret_hash, hash)) {
-    return null
-  }
-  const now = nowSec()
-  if (row.last_used_at === null || now - row.last_used_at >= SLIDE_AFTER_SEC) {
-    await db.prepare('UPDATE api_tokens SET last_used_at = ? WHERE id = ?').bind(now, row.id).run()
-  }
-  return row
-}
-
-function extractAuthToken(header: string | undefined): string | null {
-  if (!header) {
-    return null
-  }
-  const match = /^GoogleLogin\s+auth=(.+)$/i.exec(header.trim())
-  if (!match) {
-    return null
-  }
-  const raw = match[1]
-  if (raw === undefined) {
-    return null
-  }
-  const slash = raw.lastIndexOf('/')
-  return slash === -1 ? raw : raw.slice(slash + 1)
+  return c.text('Unauthorized', 401)
 }
 
 const requireGoogleAuth: MiddlewareHandler<AppEnv> = async (c, next) => {
-  const token = extractAuthToken(c.req.header('authorization'))
+  const token = googleLoginToken(c.req.header('authorization'))
   if (!token) {
-    return c.text('Unauthorized', 401)
+    return rejectUnauthorized(c)
   }
-  const row = await findToken(c.env.DB, token)
+  const row = await findApiToken(c.env.DB, token)
   if (!row) {
-    return c.text('Unauthorized', 401)
+    return rejectUnauthorized(c)
   }
   await next()
 }
@@ -309,7 +266,7 @@ export const greaderAccounts = new Hono<AppEnv>().post(
     if (!passwd) {
       return c.text('Error=BadAuthentication', 403)
     }
-    const token = await findToken(c.env.DB, passwd)
+    const token = await findApiToken(c.env.DB, passwd)
     if (!token) {
       return c.text('Error=BadAuthentication', 403)
     }
