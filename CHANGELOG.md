@@ -1,5 +1,11 @@
 # @shikakun/konpeito
 
+## 0.3.0
+
+### Minor Changes
+
+- [#12](https://github.com/shikakun/konpeito/pull/12) [`84c1b84`](https://github.com/shikakun/konpeito/commit/84c1b848828c2da01070fa12081c02884b4c73aa) Thanks [@shikakun](https://github.com/shikakun)! - `/api/v1`をアクセストークンからも呼び出せるようにした
+
 ## 0.2.2
 
 ### Patch Changes
