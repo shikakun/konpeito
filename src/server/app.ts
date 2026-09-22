@@ -1,13 +1,19 @@
-import { Hono } from 'hono'
+import { Hono, type MiddlewareHandler } from 'hono'
 import { csrf } from 'hono/csrf'
 import { HTTPException } from 'hono/http-exception'
 import { apiError } from '../shared/errors.ts'
+import { bearerToken } from './lib/api-token.ts'
 import { requireJsonAndOrigin } from './middleware/json-origin.ts'
 import { applyAppHeaders, securityHeadersMiddleware } from './middleware/security-headers.ts'
 import { api } from './routes/api/index.ts'
 import { greader, greaderAccounts, greaderApi } from './routes/greader/index.ts'
 import { image } from './routes/image.ts'
 import type { AppEnv } from './types.ts'
+
+const skipWhenBearer =
+  (mw: MiddlewareHandler<AppEnv>): MiddlewareHandler<AppEnv> =>
+  (c, next) =>
+    bearerToken(c.req.header('authorization')) !== null ? next() : mw(c, next)
 
 let authApp: Promise<Hono<AppEnv>> | undefined
 function loadAuth(): Promise<Hono<AppEnv>> {
@@ -21,9 +27,9 @@ export const app = new Hono<AppEnv>()
     applyAppHeaders(c)
     await next()
   })
-  .use('/api/v1/*', csrf())
+  .use('/api/v1/*', skipWhenBearer(csrf()))
   .use('/auth/*', csrf())
-  .use('/api/v1/*', requireJsonAndOrigin())
+  .use('/api/v1/*', skipWhenBearer(requireJsonAndOrigin()))
   .use('/auth/*', requireJsonAndOrigin())
   .onError(async (err, c) => {
     applyAppHeaders(c)
