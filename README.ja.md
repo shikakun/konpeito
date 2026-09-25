@@ -6,7 +6,7 @@
 
 Konpeito（金平糖）は、Cloudflare WorkersとD1で動作するフィードリーダーです。APIサーバーとWebフロントエンドで構成されています。
 
-1つのサーバーを1人のユーザーだけが使い、認証はパスキーのみという割り切った仕様なので、シンプルで軽量です。RSS、Atom、RDF、JSON Feedの購読、Mozilla Readabilityによる全文取得、画像プロキシ、全文検索といった基本的な機能が揃っています。Google Reader API互換のため、Reeder Classicなどのクライアントのバックエンドとしても利用できます。
+ひとつのサーバーを1人のユーザーだけが使い、認証はパスキーのみという割り切った仕様なので、シンプルで軽量です。RSS、Atom、RDF、JSON Feedの購読、Mozilla Readabilityによる全文取得、画像プロキシ、全文検索といった基本的な機能が揃っています。Google Reader API互換のため、Reeder Classicなどのクライアントのバックエンドとしても利用できます。
 
 表示や操作を試せるデモ：[sample.konpeito.shikakun.com](https://sample.konpeito.shikakun.com)
 
@@ -28,6 +28,13 @@ npx @shikakun/konpeito@latest setup
 
 インストーラーを実行すると、対話形式でWorker、D1のデータベース、Queuesのキューを作成し、デプロイします。デプロイが終わると、bootstrapトークンを含むURLが表示されます。このURLを開いてパスキーを登録すると、ログインできるようになります。入力した内容は`~/.config/konpeito/<Worker名>.json`に保存されます。
 
+Workerの名前をサーバーごとに変えると、ひとつのCloudflareアカウントで複数のサーバーを運用できます。名前は対話形式で入力するか、`--name`オプションで指定します。指定した名前ごとに、Worker、D1のデータベース、Queuesのキューが作成されます。
+
+```sh
+npx @shikakun/konpeito@latest setup --name konpeito-alice
+npx @shikakun/konpeito@latest setup --name konpeito-bob
+```
+
 ## アップデート
 
 ```sh
@@ -36,8 +43,15 @@ npx @shikakun/konpeito@latest update
 
 最新のソースコードを取得してデプロイし、データベースのマイグレーションを適用します。
 
+ひとつのCloudflareアカウントで複数のサーバーを運用している場合は、`--name`で対象を指定するか、`--all`ですべてをアップデートします。どちらも指定しない場合は、対話形式で選択できます。
+
+```sh
+npx @shikakun/konpeito@latest update --name konpeito-alice
+npx @shikakun/konpeito@latest update --all
+```
+
 ## ライセンス
 
-Licensed under the MIT License, Copyright © 2026 [@shikakun](https://shikakun.com).
+KonpeitoはMITライセンスで配布しています。Copyright © 2026 [@shikakun](https://shikakun.com).
 
-See [LICENSE](./LICENSE) for more information.
+詳細は、[LICENSE](./LICENSE)をご覧ください。

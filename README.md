@@ -28,6 +28,13 @@ npx @shikakun/konpeito@latest setup
 
 The installer walks you through creating a Worker, a D1 database, and a queue in Cloudflare Queues, then deploys them. When the deployment finishes, it prints a URL containing a bootstrap token. Once you open that URL and register a passkey, you can sign in. Your answers are saved to `~/.config/konpeito/<worker-name>.json`.
 
+To run several servers on a single Cloudflare account, give each one its own Worker name, either at the installer's prompt or with the `--name` option. Each name gets its own Worker, D1 database, and queues.
+
+```sh
+npx @shikakun/konpeito@latest setup --name konpeito-alice
+npx @shikakun/konpeito@latest setup --name konpeito-bob
+```
+
 ## Updating
 
 ```sh
@@ -35,6 +42,13 @@ npx @shikakun/konpeito@latest update
 ```
 
 This fetches the latest source code, deploys it, and applies any pending database migrations.
+
+If you run several servers on a single Cloudflare account, pick one with `--name`, or update all of them with `--all`. Without either, the installer asks which one to update.
+
+```sh
+npx @shikakun/konpeito@latest update --name konpeito-alice
+npx @shikakun/konpeito@latest update --all
+```
 
 ## License
 
