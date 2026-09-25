@@ -1,5 +1,11 @@
 # @shikakun/konpeito
 
+## 0.4.0
+
+### Minor Changes
+
+- [#14](https://github.com/shikakun/konpeito/pull/14) [`bbad3d0`](https://github.com/shikakun/konpeito/commit/bbad3d0a5ad5850a2a586f86b5c817dc797e34aa) Thanks [@shikakun](https://github.com/shikakun)! - ひとつのCloudflareアカウントで複数のサーバーを運用できるようにした
+
 ## 0.3.0
 
 ### Minor Changes
