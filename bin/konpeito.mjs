@@ -146,13 +146,23 @@ async function listDatabases() {
 
 const databaseIdOf = (row) => row.uuid ?? row.id ?? row.database_id ?? null
 
-async function ensureDatabase(name, location, assumeYes) {
+async function ensureDatabase(name, location, { assumeYes, recordedId }) {
   const existing = (await listDatabases()).find((row) => row.name === name)
   if (existing) {
     const id = databaseIdOf(existing)
     if (!id) throw new CliError(`Cloudflare returned no id for the database ${name}.`)
-    const reuse = assumeYes || (await askYesNo(`A database named ${name} exists. Use it?`, true))
-    if (!reuse) throw new CliError('Choose another database name and run setup again.')
+    if (id !== recordedId) {
+      const notice = `A database named ${name} exists, but it is not recorded for this Worker.`
+      if (assumeYes) {
+        throw new CliError(
+          `${notice} Run setup without --yes to use it anyway, or choose another database name.`,
+        )
+      }
+      info(notice)
+      if (!(await askYesNo('Use it anyway?', false))) {
+        throw new CliError('Choose another database name and run setup again.')
+      }
+    }
     info(`Using the existing database ${name}.`)
     return id
   }
@@ -162,6 +172,16 @@ async function ensureDatabase(name, location, assumeYes) {
   if (!id) throw new CliError(`Created the database ${name}, but could not read back its id.`)
   info(`Created the database ${name}.`)
   return id
+}
+
+async function workerExists(name) {
+  const result = await tryWrangler(['deployments', 'list', '--name', name, '--json'])
+  if (result.code === 0) return true
+  // 10007はWorkerが存在しないことを示すエラーコード
+  if (/code:\s*10007\b/.test(result.output)) return false
+  throw new CliError(
+    `Could not check whether the Worker ${name} exists.\n\n${result.output.trim()}`,
+  )
 }
 
 async function ensureQueue(name) {
@@ -247,6 +267,7 @@ function listStates() {
     .readdirSync(stateDir)
     .filter((entry) => entry.endsWith('.json'))
     .map((entry) => JSON.parse(fs.readFileSync(path.join(stateDir, entry), 'utf8')))
+    .sort((a, b) => a.worker.localeCompare(b.worker))
 }
 
 function writeState(state) {
@@ -256,19 +277,33 @@ function writeState(state) {
   return next
 }
 
-function resolveState(name) {
+function listStatesOrFail() {
+  const states = listStates()
+  if (states.length === 0) {
+    throw new CliError('No installation is recorded yet. Run `konpeito setup` first.')
+  }
+  return states
+}
+
+async function resolveState(name) {
   if (name) {
     const state = readState(name)
     if (!state) throw new CliError(`No installation named ${name} is recorded in ${stateDir}.`)
     return state
   }
-  const states = listStates()
+  const states = listStatesOrFail()
   if (states.length === 1) return states[0]
-  if (states.length === 0) {
-    throw new CliError('No installation is recorded yet. Run `konpeito setup` first.')
+  if (!terminal.interactive) {
+    const names = states.map((state) => state.worker).join(', ')
+    throw new CliError(
+      `Several installations are recorded (${names}). Pick one with --name, or pass --all.`,
+    )
   }
-  const names = states.map((state) => state.worker).join(', ')
-  throw new CliError(`Several installations are recorded (${names}). Pick one with --name.`)
+  const choices = states.map((state) => ({
+    value: state,
+    label: state.url ? `${state.worker} (${state.url})` : state.worker,
+  }))
+  return askChoice('Which installation should be updated?', choices, 0)
 }
 
 async function migrateAndDeploy(state, prepare) {
@@ -285,6 +320,46 @@ async function migrateAndDeploy(state, prepare) {
   })
 }
 
+function suggestWorkerName() {
+  const taken = new Set(listStates().map((state) => state.worker))
+  if (!taken.has('konpeito')) return 'konpeito'
+  for (let n = 2; ; n++) {
+    if (!taken.has(`konpeito-${n}`)) return `konpeito-${n}`
+  }
+}
+
+async function confirmWorker(worker, assumeYes) {
+  if (readState(worker)) {
+    if (assumeYes) return true
+    info(`${worker} is already recorded in ${stateDir}.`)
+    if (await askYesNo('Set it up again? Its data is kept.', false)) return true
+    throw new CliError('Nothing was changed. Run `konpeito update` to update it.')
+  }
+  if (!(await workerExists(worker))) return true
+  const notice = `A Worker named ${worker} exists on Cloudflare, but it is not recorded in ${stateDir}.`
+  if (assumeYes) {
+    throw new CliError(`${notice} Run setup without --yes to take it over, or choose another name.`)
+  }
+  info(notice)
+  return askYesNo('Take it over? Its secrets are replaced.', false)
+}
+
+async function chooseWorker(fixedName, assumeYes) {
+  while (true) {
+    const worker =
+      fixedName ??
+      (await askText('Worker name', {
+        defaultValue: suggestWorkerName(),
+        validate: (value) =>
+          WORKER_NAME.test(value) ? null : 'Use lowercase letters, digits and hyphens.',
+      }))
+    if (!WORKER_NAME.test(worker)) throw new CliError(`${worker} is not a valid Worker name.`)
+    if (await confirmWorker(worker, assumeYes)) return worker
+    if (fixedName) throw new CliError('Nothing was changed. Choose another name with --name.')
+    info('Choose another name.')
+  }
+}
+
 async function setup(values) {
   const assumeYes = values.yes === true
 
@@ -292,21 +367,8 @@ async function setup(values) {
   await ensureAuth()
 
   heading('Configuration')
-  const worker =
-    values.name ??
-    (assumeYes
-      ? 'konpeito'
-      : await askText('Worker name', {
-          defaultValue: 'konpeito',
-          validate: (value) =>
-            WORKER_NAME.test(value) ? null : 'Use lowercase letters, digits and hyphens.',
-        }))
-  if (!WORKER_NAME.test(worker)) throw new CliError(`${worker} is not a valid Worker name.`)
-  if (readState(worker) && !assumeYes) {
-    info(`${worker} is already recorded in ${stateDir}.`)
-    const again = await askYesNo('Set it up again? Its data is kept.', false)
-    if (!again) throw new CliError('Nothing was changed. Run `konpeito update` to update it.')
-  }
+  const worker = await chooseWorker(values.name ?? (assumeYes ? 'konpeito' : null), assumeYes)
+  const recorded = readState(worker)
 
   blank()
   info('A passkey is bound to the domain it was registered on, so decide now.')
@@ -361,7 +423,10 @@ async function setup(values) {
   }
 
   heading('Resources')
-  state.database.id = await ensureDatabase(state.database.name, location, assumeYes)
+  state.database.id = await ensureDatabase(state.database.name, location, {
+    assumeYes,
+    recordedId: recorded?.database.id ?? null,
+  })
   await ensureQueue(state.queues.main)
   await ensureQueue(state.queues.dlq)
 
@@ -394,17 +459,48 @@ async function setup(values) {
   info(`Settings saved to ${stateFileOf(state.worker)}.`)
 }
 
-async function update(values) {
-  const state = resolveState(values.name)
-  heading(`Konpeito ${state.worker}`)
-  await ensureAuth()
-
+async function deployUpdate(state) {
   const output = await migrateAndDeploy(state)
 
   const next = writeState({ ...state, url: findWorkerUrl(output, state) ?? state.url })
   heading('Done')
   info(`${next.worker} is up to date${next.url ? ` at ${next.url}` : ''}.`)
   info('Secrets and the registered passkey were left untouched.')
+}
+
+async function updateAll() {
+  const states = listStatesOrFail()
+  heading('Konpeito')
+  await ensureAuth()
+
+  const failed = []
+  for (const state of states) {
+    heading(`Konpeito ${state.worker}`)
+    try {
+      await deployUpdate(state)
+    } catch (error) {
+      failed.push(state.worker)
+      blank()
+      console.error(error instanceof CliError ? error.message : error)
+    }
+  }
+
+  heading('Summary')
+  for (const state of states) {
+    info(`${failed.includes(state.worker) ? 'Failed ' : 'Updated'}  ${state.worker}`)
+  }
+  if (failed.length > 0) process.exitCode = 1
+}
+
+async function update(values) {
+  if (values.all) {
+    if (values.name) throw new CliError('Pass either --name or --all, not both.')
+    return await updateAll()
+  }
+  const state = await resolveState(values.name)
+  heading(`Konpeito ${state.worker}`)
+  await ensureAuth()
+  await deployUpdate(state)
 }
 
 function status() {
@@ -440,6 +536,7 @@ Options
   --database <name>  D1 database name (setup only)
   --domain <host>    Serve from your own domain instead of workers.dev (setup only)
   --location <hint>  Where the database lives: ${hints} (setup only)
+  --all              Update every recorded installation (update only)
   -y, --yes          Accept the defaults and skip the questions
   -h, --help         Show this message
   -v, --version      Show the version
@@ -454,6 +551,7 @@ async function main() {
       database: { type: 'string' },
       domain: { type: 'string' },
       location: { type: 'string' },
+      all: { type: 'boolean' },
       yes: { type: 'boolean', short: 'y' },
       help: { type: 'boolean', short: 'h' },
       version: { type: 'boolean', short: 'v' },
