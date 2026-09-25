@@ -7,7 +7,7 @@ export async function consumeAuthLimit(c: Context<AppEnv>): Promise<boolean> {
     return true
   }
   const ip = c.req.header('cf-connecting-ip') ?? 'unknown'
-  const { success } = await c.env.AUTH_LIMITER.limit({ key: ip })
+  const { success } = await c.env.AUTH_LIMITER.limit({ key: `${host}:${ip}` })
   if (!success) {
     console.log({ event: 'ratelimit.block', ip })
   }
