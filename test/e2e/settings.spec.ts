@@ -17,7 +17,14 @@ test.describe('settings', () => {
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
 
     await expect(dialog.getByRole('tabpanel')).toBeVisible()
-    const tabs = ['Data', 'Storage', 'Fetch status', 'Passkeys', 'Sessions', 'Access tokens']
+    const tabs = [
+      'Data',
+      'Storage',
+      'Fetch status',
+      'Passkeys',
+      'Signed-in devices',
+      'Access tokens',
+    ]
     for (const name of tabs) {
       await page.getByRole('tab', { name }).click()
       const panel = dialog.getByRole('tabpanel', { name })

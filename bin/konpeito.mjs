@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -285,7 +285,7 @@ function listStatesOrFail() {
   return states
 }
 
-async function resolveState(name) {
+async function resolveState(name, { question, hint }) {
   if (name) {
     const state = readState(name)
     if (!state) throw new CliError(`No installation named ${name} is recorded in ${stateDir}.`)
@@ -295,15 +295,13 @@ async function resolveState(name) {
   if (states.length === 1) return states[0]
   if (!terminal.interactive) {
     const names = states.map((state) => state.worker).join(', ')
-    throw new CliError(
-      `Several installations are recorded (${names}). Pick one with --name, or pass --all.`,
-    )
+    throw new CliError(`Several installations are recorded (${names}). ${hint}`)
   }
   const choices = states.map((state) => ({
     value: state,
     label: state.url ? `${state.worker} (${state.url})` : state.worker,
   }))
-  return askChoice('Which installation should be updated?', choices, 0)
+  return askChoice(question, choices, 0)
 }
 
 async function migrateAndDeploy(state, prepare) {
@@ -497,10 +495,228 @@ async function update(values) {
     if (values.name) throw new CliError('Pass either --name or --all, not both.')
     return await updateAll()
   }
-  const state = await resolveState(values.name)
+  const state = await resolveState(values.name, {
+    question: 'Which installation should be updated?',
+    hint: 'Pick one with --name, or pass --all.',
+  })
   heading(`Konpeito ${state.worker}`)
   await ensureAuth()
   await deployUpdate(state)
+}
+
+const TOKEN_NAME_MAX = 100
+const BASE32_ALPHABET = 'abcdefghijklmnopqrstuvwxyz234567'
+
+// src/server/lib/crypto.tsの`toBase32Lower`と同じ。binからはTypeScriptを読み込めないので複製している
+function toBase32Lower(bytes) {
+  let bits = 0
+  let value = 0
+  let output = ''
+  for (const byte of bytes) {
+    value = (value << 8) | byte
+    bits += 8
+    while (bits >= 5) {
+      output += BASE32_ALPHABET[(value >>> (bits - 5)) & 31]
+      bits -= 5
+    }
+  }
+  if (bits > 0) output += BASE32_ALPHABET[(value << (5 - bits)) & 31]
+  return output
+}
+
+const nowSec = () => Math.floor(Date.now() / 1000)
+const sqlString = (value) => `'${value.replaceAll("'", "''")}'`
+
+function validateTokenName(value) {
+  if (value.length === 0) return 'Enter a name.'
+  if (value.length > TOKEN_NAME_MAX) return `Use ${TOKEN_NAME_MAX} characters or fewer.`
+  const hasControl = [...value].some((char) => {
+    const code = char.codePointAt(0) ?? 0
+    return code < 0x20 || code === 0x7f
+  })
+  if (hasControl) return 'Remove control characters.'
+  return null
+}
+
+function formatTime(sec) {
+  if (sec === null || sec === undefined) return '-'
+  const date = new Date(sec * 1000)
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
+async function d1Execute(state, sql) {
+  return withTempDir('konpeito-', async (dir) => {
+    const configPath = writeDeployConfig(dir, state)
+    const args = ['d1', 'execute', 'DB', '--remote', '--json', '-c', configPath, '--command', sql]
+    const result = await tryWrangler(args)
+    if (result.code !== 0) {
+      if (/no such column|has no column named/i.test(result.output)) {
+        throw new CliError(
+          `${state.worker} is older than this CLI. Run \`konpeito update --name ${state.worker}\` first.`,
+        )
+      }
+      throw new CliError(
+        `Could not run the query on the database of ${state.worker}.\n\n${result.output.trim()}`,
+      )
+    }
+    const start = result.stdout.indexOf('[')
+    const parsed = start === -1 ? [] : JSON.parse(result.stdout.slice(start))
+    return parsed.map((entry) => entry.results ?? [])
+  })
+}
+
+async function listTokens(state) {
+  const [rows] = await d1Execute(
+    state,
+    'SELECT id, name, created_at, last_used_at, can_sign_in FROM api_tokens WHERE revoked_at IS NULL ORDER BY id',
+  )
+  return rows ?? []
+}
+
+async function resolveTokenState(values) {
+  const state = await resolveState(values.name, {
+    question: 'Which installation?',
+    hint: 'Pick one with --name.',
+  })
+  heading(`Konpeito ${state.worker}`)
+  await ensureAuth()
+  return state
+}
+
+async function tokenCreate(values) {
+  const assumeYes = values.yes === true
+  const state = await resolveTokenState(values)
+
+  blank()
+  const tokenName =
+    values['token-name'] ??
+    (assumeYes
+      ? null
+      : await askText('Token name', { defaultValue: undefined, validate: validateTokenName }))
+  if (tokenName === null) throw new CliError('Pass the token name with --token-name.')
+  const problem = validateTokenName(tokenName)
+  if (problem) throw new CliError(`${tokenName} cannot be used as a token name. ${problem}`)
+  const canSignIn =
+    values['sign-in'] === true ||
+    (!assumeYes && (await askYesNo('Also allow signing in with this token?', false)))
+
+  const secret = toBase32Lower(randomBytes(32))
+  const hash = createHash('sha256').update(secret).digest('hex')
+  const statements = [
+    "SELECT value FROM settings WHERE key = 'token_sign_in_paused'",
+    `INSERT INTO api_tokens (name, secret_hash, created_at, can_sign_in) VALUES (${sqlString(tokenName)}, '${hash}', ${nowSec()}, ${canSignIn ? 1 : 0})`,
+  ]
+  if (canSignIn) {
+    statements.push(
+      "INSERT INTO settings (key, value) VALUES ('token_sign_in_paused', 'false') ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+    )
+  }
+  const [paused] = await d1Execute(state, statements.join(';\n'))
+  const resumed = canSignIn && paused?.[0]?.value === 'true'
+
+  heading('New access token')
+  info(secret)
+  blank()
+  if (canSignIn) {
+    info('This token is shown only once. Save it in a password manager or another safe place.')
+    info(
+      'Because it can also be used to sign in, create a separate token for your RSS reader apps.',
+    )
+    blank()
+    const loginUrl = state.url ? `${state.url}/login` : '/login on your Worker'
+    info(`To sign in, open ${loginUrl} and choose “Sign in with an access token”.`)
+    if (resumed) info('Signing in with access tokens was paused, so it has been resumed.')
+  } else {
+    info('This token is shown only once. Enter it as the password in your RSS reader app.')
+  }
+}
+
+async function tokenList(values) {
+  const state = await resolveTokenState(values)
+  const tokens = await listTokens(state)
+  blank()
+  if (tokens.length === 0) {
+    info('No access tokens yet.')
+    return
+  }
+  const idWidth = Math.max(2, ...tokens.map((token) => String(token.id).length))
+  const row = (id, signIn, created, lastUsed, name) =>
+    info(
+      `${id.padStart(idWidth)}  ${signIn.padEnd(7)}  ${created.padEnd(16)}  ${lastUsed.padEnd(16)}  ${name}`,
+    )
+  row('ID', 'Sign-in', 'Created', 'Last used', 'Name')
+  for (const token of tokens) {
+    row(
+      String(token.id),
+      token.can_sign_in === 1 ? 'allowed' : '-',
+      formatTime(token.created_at),
+      formatTime(token.last_used_at),
+      token.name,
+    )
+  }
+}
+
+async function tokenDelete(values, idArgument) {
+  const assumeYes = values.yes === true
+  const state = await resolveTokenState(values)
+  const tokens = await listTokens(state)
+  if (tokens.length === 0) throw new CliError('There are no access tokens to delete.')
+
+  let token
+  if (idArgument !== undefined) {
+    const id = Number(idArgument)
+    token = Number.isInteger(id) ? tokens.find((candidate) => candidate.id === id) : undefined
+    if (!token)
+      throw new CliError(
+        `No access token has the ID ${idArgument}. Run \`konpeito token list\` to see them.`,
+      )
+  } else {
+    if (!terminal.interactive) throw new CliError('Pass the ID of the token to delete.')
+    blank()
+    token = await askChoice(
+      'Which access token should be deleted?',
+      tokens.map((candidate) => ({
+        value: candidate,
+        label: `${candidate.name} (ID ${candidate.id})`,
+      })),
+      0,
+    )
+  }
+
+  blank()
+  info(`Delete “${token.name}”? RSS reader apps using this token will be disconnected.`)
+  if (token.can_sign_in === 1) {
+    info('Every device signed in with this token will be signed out.')
+    if (tokens.filter((candidate) => candidate.can_sign_in === 1).length === 1) {
+      info(
+        'No tokens will be allowed to sign in after this, so the access token field will disappear from the sign-in page.',
+      )
+    }
+  }
+  if (!assumeYes && !(await askYesNo('Delete it?', false))) {
+    throw new CliError('Nothing was changed.')
+  }
+
+  await d1Execute(
+    state,
+    [
+      `UPDATE api_tokens SET revoked_at = ${nowSec()} WHERE id = ${token.id} AND revoked_at IS NULL`,
+      `DELETE FROM sessions WHERE token_id = ${token.id}`,
+    ].join(';\n'),
+  )
+  blank()
+  info(`Deleted “${token.name}”.`)
+}
+
+async function token(values, positionals) {
+  const [subcommand, idArgument] = positionals
+  if (subcommand === 'create') return await tokenCreate(values)
+  if (subcommand === 'list') return await tokenList(values)
+  if (subcommand === 'delete') return await tokenDelete(values, idArgument)
+  throw new CliError(
+    'Use `konpeito token create`, `konpeito token list`, or `konpeito token delete`.',
+  )
 }
 
 function status() {
@@ -527,19 +743,24 @@ function help() {
   console.log(`Konpeito, a feed reader you host yourself on Cloudflare Workers.
 
 Usage
-  konpeito setup     Create the Cloudflare resources and deploy
-  konpeito update    Deploy the current version over an existing installation
-  konpeito status    Show what has been installed
+  konpeito setup              Create the Cloudflare resources and deploy
+  konpeito update             Deploy the current version over an existing installation
+  konpeito status             Show what has been installed
+  konpeito token create       Create an access token
+  konpeito token list         List the access tokens
+  konpeito token delete [id]  Delete an access token
 
 Options
-  --name <name>      Worker name
-  --database <name>  D1 database name (setup only)
-  --domain <host>    Serve from your own domain instead of workers.dev (setup only)
-  --location <hint>  Where the database lives: ${hints} (setup only)
-  --all              Update every recorded installation (update only)
-  -y, --yes          Accept the defaults and skip the questions
-  -h, --help         Show this message
-  -v, --version      Show the version
+  --name <name>        Worker name
+  --database <name>    D1 database name (setup only)
+  --domain <host>      Serve from your own domain instead of workers.dev (setup only)
+  --location <hint>    Where the database lives: ${hints} (setup only)
+  --all                Update every recorded installation (update only)
+  --token-name <name>  Name of the new access token (token create only)
+  --sign-in            Also allow signing in with the new token (token create only)
+  -y, --yes            Accept the defaults and skip the questions
+  -h, --help           Show this message
+  -v, --version        Show the version
 `)
 }
 
@@ -552,6 +773,8 @@ async function main() {
       domain: { type: 'string' },
       location: { type: 'string' },
       all: { type: 'boolean' },
+      'token-name': { type: 'string' },
+      'sign-in': { type: 'boolean' },
       yes: { type: 'boolean', short: 'y' },
       help: { type: 'boolean', short: 'h' },
       version: { type: 'boolean', short: 'v' },
@@ -572,6 +795,7 @@ async function main() {
   if (command === 'setup') return await setup(values)
   if (command === 'update') return await update(values)
   if (command === 'status') return status()
+  if (command === 'token') return await token(values, positionals.slice(1))
   if (command === 'help') return help()
   throw new CliError(`Unknown command: ${command}. Run \`konpeito --help\`.`)
 }

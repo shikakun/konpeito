@@ -364,10 +364,53 @@ button:not(:disabled),
   padding-inline: 0.4em;
 }
 
+:root[data-login-transition] {
+  --login-slide: 1rem;
+}
+
+:root[data-login-transition="backward"] {
+  --login-slide: -1rem;
+}
+
+::view-transition-group(login-mark),
+::view-transition-group(login-method),
+::view-transition-group(login-token),
+::view-transition-group(login-back) {
+  animation-duration: 280ms;
+  animation-timing-function: cubic-bezier(0.2, 0, 0, 1);
+}
+
+::view-transition-old(login-method),
+::view-transition-old(login-back) {
+  animation: 160ms ease-in both login-slide-out;
+}
+
+::view-transition-new(login-method),
+::view-transition-new(login-back) {
+  animation: 280ms cubic-bezier(0.2, 0, 0, 1) 60ms both login-slide-in;
+}
+
+@keyframes login-slide-out {
+  to {
+    opacity: 0;
+    translate: 0 calc(var(--login-slide) * -1);
+  }
+}
+
+@keyframes login-slide-in {
+  from {
+    opacity: 0;
+    translate: 0 var(--login-slide);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
-  *::after {
+  *::after,
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;

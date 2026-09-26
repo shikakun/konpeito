@@ -4,7 +4,12 @@ import { useState } from 'react'
 import { ConfirmDialog } from '../../../components/ui/alert-dialog.tsx'
 import { Button } from '../../../components/ui/button.tsx'
 import { useMessages } from '../../../i18n/I18nProvider.tsx'
-import { beginPasskeyRegister, signalAllAcceptedCredentials } from '../../../lib/auth.ts'
+import {
+  beginPasskeyRegister,
+  PasskeyConfirmationError,
+  signalAllAcceptedCredentials,
+  withPasskeyConfirmation,
+} from '../../../lib/auth.ts'
 import { formatDateTime } from '../../../lib/format.ts'
 import { errorMessage } from '../../../lib/http.ts'
 import { useNotify } from '../../../lib/notify.ts'
@@ -40,7 +45,10 @@ export function PasskeysTab(props: { userHandle: string }) {
       await syncAuthenticator()
       notify(done)
     } catch (caught) {
-      const next = errorMessage(caught, fallback)
+      const next =
+        caught instanceof PasskeyConfirmationError
+          ? t.settings.passkeys.reauthFailed
+          : errorMessage(caught, fallback)
       setError(next)
       notify(next, 'destructive')
     }
@@ -54,7 +62,7 @@ export function PasskeysTab(props: { userHandle: string }) {
     setBusy(true)
     try {
       await run(
-        () => deleteCredential(id),
+        () => withPasskeyConfirmation(() => deleteCredential(id)),
         t.settings.passkeys.deleted,
         t.settings.passkeys.deleteFailed,
       )
@@ -74,7 +82,7 @@ export function PasskeysTab(props: { userHandle: string }) {
           size="sm"
           onClick={() =>
             void run(
-              () => beginPasskeyRegister(),
+              () => withPasskeyConfirmation(() => beginPasskeyRegister()),
               t.settings.passkeys.added,
               t.settings.passkeys.registerFailed,
             )

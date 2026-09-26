@@ -47,6 +47,7 @@ export const queryKeys = {
   storage: ['storage'] as const,
   health: ['health'] as const,
   tokens: ['tokens'] as const,
+  tokenSignIn: ['token-sign-in'] as const,
   credentials: ['credentials'] as const,
   sessions: ['sessions'] as const,
 }
@@ -279,12 +280,32 @@ export async function fetchTokens() {
   return okJson(await api.tokens.$get())
 }
 
-export async function createToken(name: string): Promise<{ secret: string }> {
-  return okJson(await api.tokens.$post({ json: { name } }))
+export async function createToken(input: {
+  name: string
+  canSignIn: boolean
+  resumeSignIn: boolean
+}) {
+  return okJson(
+    await api.tokens.$post({
+      json: {
+        name: input.name,
+        can_sign_in: input.canSignIn,
+        resume_sign_in: input.resumeSignIn,
+      },
+    }),
+  )
 }
 
-export async function revokeToken(id: number): Promise<void> {
-  await okVoid(await api.tokens[':id'].$delete({ param: { id: String(id) } }))
+export async function deleteToken(id: number) {
+  return okJson(await api.tokens[':id'].$delete({ param: { id: String(id) } }))
+}
+
+export async function fetchTokenSignIn() {
+  return okJson(await api['token-sign-in'].$get())
+}
+
+export async function setTokenSignInPaused(paused: boolean) {
+  return okJson(await api['token-sign-in'].$put({ json: { paused } }))
 }
 
 export async function fetchCredentials() {
@@ -299,6 +320,6 @@ export async function fetchSessions() {
   return okJson(await api.sessions.$get())
 }
 
-export async function revokeSession(id: string): Promise<void> {
+export async function signOutSession(id: string): Promise<void> {
   await okVoid(await api.sessions[':id'].$delete({ param: { id } }))
 }

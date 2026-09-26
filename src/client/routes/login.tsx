@@ -1,4 +1,5 @@
 import { createFileRoute, redirect } from '@tanstack/react-router'
+import { fetchAuthMethods } from '../lib/auth.ts'
 import { UnauthorizedError } from '../lib/http.ts'
 import { type Bootstrap, fetchBootstrap } from '../lib/queries.ts'
 
@@ -27,4 +28,5 @@ export const Route = createFileRoute('/login')({
       throw redirect({ to: '/' })
     }
   },
+  loader: () => fetchAuthMethods(),
 })

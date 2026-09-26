@@ -6,7 +6,7 @@
 
 Konpeito（金平糖）は、Cloudflare WorkersとD1で動作するフィードリーダーです。APIサーバーとWebフロントエンドで構成されています。
 
-ひとつのサーバーを1人のユーザーだけが使い、認証はパスキーのみという割り切った仕様なので、シンプルで軽量です。RSS、Atom、RDF、JSON Feedの購読、Mozilla Readabilityによる全文取得、画像プロキシ、全文検索といった基本的な機能が揃っています。Google Reader API互換のため、Reeder Classicなどのクライアントのバックエンドとしても利用できます。
+ひとつのサーバーを1人のユーザーだけが使い、パスキーでログインするという割り切った仕様なので、シンプルで軽量です。RSS、Atom、RDF、JSON Feedの購読、Mozilla Readabilityによる全文取得、画像プロキシ、全文検索といった基本的な機能が揃っています。Google Reader API互換のため、Reeder Classicなどのクライアントのバックエンドとしても利用できます。
 
 表示や操作を試せるデモ：[sample.konpeito.shikakun.com](https://sample.konpeito.shikakun.com)
 
@@ -49,6 +49,18 @@ npx @shikakun/konpeito@latest update
 npx @shikakun/konpeito@latest update --name konpeito-alice
 npx @shikakun/konpeito@latest update --all
 ```
+
+## アクセストークン
+
+アクセストークンを発行することで、Google Reader API互換のクライアントからバックエンドのサーバーとして利用できます。トークンは、設定画面のほか、CLIからも発行や管理ができます。
+
+```sh
+npx @shikakun/konpeito@latest token create
+npx @shikakun/konpeito@latest token list
+npx @shikakun/konpeito@latest token delete <ID>
+```
+
+アクセストークンは、サーバーのログインにも使用できます。もしパスキーを失くしてログインできなくなったときは、`token create --sign-in`でログインできる権限を持つアクセストークンを発行し、ログイン画面の「アクセストークンでログイン」からログインしたうえで、新しいパスキーを登録し、失くしたパスキーとログインに使用したアクセストークンを削除してください。
 
 ## ライセンス
 
