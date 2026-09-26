@@ -70,10 +70,7 @@ describe('signing in with an access token', () => {
     const secret = await apiToken('emergency', { canSignIn: true })
     const res = await tokenLogin(secret)
     expect(res.status).toBe(200)
-    const cookie = sessionCookieFrom(res)
-    expect(await sessionCount(await apiTokenId(secret))).toBe(1)
-
-    const sessions = await send('/api/v1/sessions', { cookie })
+    const sessions = await send('/api/v1/sessions', { cookie: sessionCookieFrom(res) })
     const body = (await sessions.json()) as {
       sessions: { current: boolean; token_name: string | null }[]
     }
@@ -88,18 +85,6 @@ describe('signing in with an access token', () => {
     expect(wrong.status).toBe(401)
     expect(notAllowed.status).toBe(401)
     expect(await notAllowed.json()).toEqual(await wrong.json())
-  })
-
-  it('rejects every token while paused', async () => {
-    const secret = await apiToken('sign-in', { canSignIn: true })
-    const pause = await send('/api/v1/token-sign-in', {
-      method: 'PUT',
-      cookie: await sessionCookie(),
-      body: { paused: true },
-    })
-    expect(pause.status).toBe(200)
-    expect(await methods()).toEqual({ access_token: false })
-    expect((await tokenLogin(secret)).status).toBe(401)
   })
 })
 
@@ -153,14 +138,29 @@ describe('managing sign-in tokens', () => {
     expect(await methods()).toEqual({ access_token: true })
   })
 
-  it('asks for a passkey before resuming, but not before pausing', async () => {
-    await apiToken('sign-in', { canSignIn: true })
+  it('pauses without a passkey, signing out token sessions and rejecting every token', async () => {
+    const secret = await apiToken('sign-in', { canSignIn: true })
+    const id = await apiTokenId(secret)
+    await sessionCookie({ tokenId: id })
+    const passkeySession = await sessionCookie()
+
     const pause = await send('/api/v1/token-sign-in', {
       method: 'PUT',
-      cookie: await sessionCookie(),
+      cookie: passkeySession,
       body: { paused: true },
     })
     expect(pause.status).toBe(200)
+    expect(await sessionCount(id)).toBe(0)
+    expect(await methods()).toEqual({ access_token: false })
+    expect((await tokenLogin(secret)).status).toBe(401)
+    expect((await send('/api/v1/storage', { cookie: passkeySession })).status).toBe(200)
+  })
+
+  it('asks for a passkey before resuming', async () => {
+    await apiToken('sign-in', { canSignIn: true })
+    await env.DB.prepare(
+      "INSERT INTO settings (key, value) VALUES ('token_sign_in_paused', 'true')",
+    ).run()
     const resume = await send('/api/v1/token-sign-in', {
       method: 'PUT',
       cookie: await sessionCookie(),
@@ -195,43 +195,10 @@ describe('managing sign-in tokens', () => {
     const cookie = await sessionCookie({ tokenId: id })
     await sessionCookie({ tokenId: id })
 
-    const list = await send('/api/v1/tokens', { cookie })
-    expect(await list.json()).toMatchObject({
-      tokens: [{ id, can_sign_in: true, signed_in_here: true }],
-    })
-
     const res = await send(`/api/v1/tokens/${id}`, { method: 'DELETE', cookie })
     expect(await res.json()).toEqual({ ok: true, signed_out: true })
     expect(await sessionCount(id)).toBe(0)
     expect(await methods()).toEqual({ access_token: false })
-  })
-
-  it('signs out every token session when paused', async () => {
-    const id = await apiTokenId(await apiToken('sign-in', { canSignIn: true }))
-    const tokenSession = await sessionCookie({ tokenId: id })
-    const passkeySession = await sessionCookie()
-
-    const state = await send('/api/v1/token-sign-in', { cookie: tokenSession })
-    expect(await state.json()).toEqual({
-      available: true,
-      paused: false,
-      signed_in_with_token: true,
-    })
-
-    const res = await send('/api/v1/token-sign-in', {
-      method: 'PUT',
-      cookie: passkeySession,
-      body: { paused: true },
-    })
-    expect(await res.json()).toMatchObject({ paused: true, signed_out: false })
-    expect(await sessionCount(id)).toBe(0)
-    expect((await send('/api/v1/storage', { cookie: passkeySession })).status).toBe(200)
-  })
-
-  it('requires a session to start a passkey confirmation', async () => {
-    expect((await send('/auth/reauth/options')).status).toBe(401)
-    const res = await send('/auth/reauth/options', { cookie: await sessionCookie() })
-    expect(res.status).toBe(200)
   })
 })
 

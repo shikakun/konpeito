@@ -65,8 +65,6 @@ test.describe('access token sign-in', () => {
     const tokenField = page.getByLabel('Access token')
     await expect(tokenButton).toBeVisible()
     await expect(tokenField).toHaveCount(0)
-    const results = await new AxeBuilder({ page }).analyze()
-    expect(results.violations).toEqual([])
 
     await tokenButton.click()
     await expect(tokenField).toBeFocused()
@@ -80,6 +78,8 @@ test.describe('access token sign-in', () => {
     await tokenField.fill('wrong')
     await tokenButton.click()
     await expect(page.getByRole('alert')).toContainText('Couldn’t sign in')
+    const results = await new AxeBuilder({ page }).analyze()
+    expect(results.violations).toEqual([])
 
     await tokenField.fill(secret)
     await tokenButton.click()
