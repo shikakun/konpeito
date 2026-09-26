@@ -50,6 +50,18 @@ npx @shikakun/konpeito@latest update --name konpeito-alice
 npx @shikakun/konpeito@latest update --all
 ```
 
+## アクセストークン
+
+アクセストークンを発行することで、Google Reader API互換のクライアントからバックエンドのサーバーとして利用できます。トークンは、設定画面のほか、CLIからも発行や管理ができます。
+
+```sh
+npx @shikakun/konpeito@latest token create
+npx @shikakun/konpeito@latest token list
+npx @shikakun/konpeito@latest token delete <ID>
+```
+
+アクセストークンは、サーバーのログインにも使用できます。もしパスキーを失くしてログインできなくなったときは、`token create --sign-in`でログインできる権限を持つアクセストークンを発行し、ログイン画面の「アクセストークンでログイン」からログインしたうえで、新しいパスキーを登録し、失くしたパスキーとログインに使用したアクセストークンを削除してください。
+
 ## ライセンス
 
 KonpeitoはMITライセンスで配布しています。Copyright © 2026 [@shikakun](https://shikakun.com).

@@ -50,6 +50,18 @@ npx @shikakun/konpeito@latest update --name konpeito-alice
 npx @shikakun/konpeito@latest update --all
 ```
 
+## Access tokens
+
+With an access token, Google Reader API–compatible clients can use Konpeito as their backend server. You can create and manage tokens in the settings or from the CLI.
+
+```sh
+npx @shikakun/konpeito@latest token create
+npx @shikakun/konpeito@latest token list
+npx @shikakun/konpeito@latest token delete <ID>
+```
+
+Access tokens can also be used to sign in to your server. If you lose your passkeys and can’t sign in, create a token that is allowed to sign in with `token create --sign-in`, and sign in with “Sign in with an access token” on the sign-in page. Then add a new passkey, and delete the lost passkey and the token you used to sign in.
+
 ## License
 
 Licensed under the MIT License, Copyright © 2026 [@shikakun](https://shikakun.com).
