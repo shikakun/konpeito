@@ -11,7 +11,7 @@ import {
 } from '@simplewebauthn/browser'
 import { isRecord } from '../../shared/records.ts'
 import { getMessages } from '../i18n/locale.ts'
-import { isApiError } from './http.ts'
+import { ApiError, isApiError } from './http.ts'
 
 function currentRpId(): string {
   return window.location.hostname
@@ -90,6 +90,60 @@ async function verifyRegister(response: RegistrationResponseJSON): Promise<void>
       isApiError(body) ? body.error.message : getMessages().login.registerVerifyFailed,
     )
   }
+}
+
+export async function fetchAuthMethods(): Promise<{ accessToken: boolean }> {
+  const { status, body } = await authJson('/auth/methods')
+  return { accessToken: status === 200 && isRecord(body) && body.access_token === true }
+}
+
+export async function signInWithToken(token: string): Promise<void> {
+  const { status } = await authJson('/auth/token/login', {
+    method: 'POST',
+    body: JSON.stringify({ token }),
+  })
+  if (status !== 200) {
+    throw new Error(getMessages().login.tokenFailed)
+  }
+}
+
+export class PasskeyConfirmationError extends Error {
+  constructor() {
+    super('passkey confirmation failed')
+    this.name = 'PasskeyConfirmationError'
+  }
+}
+
+async function confirmWithPasskey(): Promise<void> {
+  let verified = false
+  try {
+    const options = await authJson('/auth/reauth/options')
+    if (options.status === 200 && hasChallenge(options.body)) {
+      const assertion = await startAuthentication({ optionsJSON: options.body })
+      const result = await authJson('/auth/reauth/verify', {
+        method: 'POST',
+        body: JSON.stringify(assertion),
+      })
+      verified = result.status === 200
+    }
+  } catch {
+    verified = false
+  }
+  if (!verified) {
+    throw new PasskeyConfirmationError()
+  }
+}
+
+export async function withPasskeyConfirmation<T>(action: () => Promise<T>): Promise<T> {
+  try {
+    return await action()
+  } catch (error) {
+    if (!(error instanceof ApiError && error.code === 'reauth_required')) {
+      throw error
+    }
+  }
+  await confirmWithPasskey()
+  return action()
 }
 
 export async function logout(): Promise<void> {

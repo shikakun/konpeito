@@ -1,12 +1,15 @@
 import { createLazyFileRoute, useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
 import { Button } from '../components/ui/button.tsx'
+import { Input } from '../components/ui/input.tsx'
+import { Field, Label } from '../components/ui/label.tsx'
 import { useMessages } from '../i18n/I18nProvider.tsx'
 import {
   beginPasskeyLogin,
   beginPasskeyRegister,
   signalAllAcceptedCredentials,
   signalUnknownCredential,
+  signInWithToken,
 } from '../lib/auth.ts'
 import { errorMessage } from '../lib/http.ts'
 import { fetchBootstrap, fetchCredentials } from '../lib/queries.ts'
@@ -19,8 +22,11 @@ function LoginPage() {
   const t = useMessages()
   const navigate = useNavigate()
   const { bootstrap: bootstrapToken } = Route.useSearch()
+  const methods = Route.useLoaderData()
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [token, setToken] = useState('')
+  const [tokenVisible, setTokenVisible] = useState(false)
 
   async function afterAuth() {
     const bootstrap = await fetchBootstrap()
@@ -46,7 +52,7 @@ function LoginPage() {
 
   return (
     <main className="flex min-h-dvh items-center justify-center p-6">
-      <div className="flex flex-col items-center gap-4">
+      <div className="flex w-full max-w-xs flex-col gap-4">
         <h1 className="text-center text-xl font-semibold">Konpeito</h1>
         <Button
           variant="secondary"
@@ -72,6 +78,59 @@ function LoginPage() {
         >
           {t.login.submit}
         </Button>
+        {methods.accessToken && bootstrapToken === undefined ? (
+          <>
+            <div className="flex items-center gap-3 text-xs text-fg-muted" aria-hidden="true">
+              <span className="h-px flex-1 bg-line" />
+              {t.login.or}
+              <span className="h-px flex-1 bg-line" />
+            </div>
+            <form
+              className="flex flex-col gap-3"
+              onSubmit={(event) => {
+                event.preventDefault()
+                void run(async () => {
+                  await signInWithToken(token)
+                  await afterAuth()
+                }, t.login.tokenFailed)
+              }}
+            >
+              <input
+                type="text"
+                name="username"
+                autoComplete="username"
+                value="konpeito"
+                readOnly
+                hidden
+              />
+              <Field>
+                <Label htmlFor="access-token">{t.login.tokenLabel}</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="access-token"
+                    name="password"
+                    type={tokenVisible ? 'text' : 'password'}
+                    autoComplete="current-password"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                    value={token}
+                    onChange={(event) => setToken(event.target.value)}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setTokenVisible(!tokenVisible)}
+                  >
+                    {tokenVisible ? t.login.hideToken : t.login.showToken}
+                  </Button>
+                </div>
+              </Field>
+              <Button type="submit" variant="outline" disabled={busy || token.length === 0}>
+                {t.login.tokenSubmit}
+              </Button>
+            </form>
+          </>
+        ) : null}
         {error ? (
           <p className="text-center text-sm text-danger-text" role="alert">
             {error}
