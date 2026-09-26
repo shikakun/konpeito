@@ -72,10 +72,11 @@ async function fetchRegisterOptions(
       ? `/auth/register/options?bootstrap=${encodeURIComponent(bootstrapToken)}`
       : '/auth/register/options'
   const { status, body } = await authJson(url)
+  if (isApiError(body)) {
+    throw new ApiError(status, body.error.code, body.error.message)
+  }
   if (status !== 200 || !hasRegistrationChallenge(body)) {
-    throw new Error(
-      isApiError(body) ? body.error.message : getMessages().login.registerChallengeFailed,
-    )
+    throw new Error(getMessages().login.registerChallengeFailed)
   }
   return body
 }

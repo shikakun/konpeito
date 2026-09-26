@@ -320,6 +320,7 @@ export const en = {
       deleteBody: (name: string) =>
         `Delete “${name}”? You won’t be able to sign in with this passkey anymore.`,
       deleteConfirm: 'Delete',
+      reauthFailed: 'Couldn’t confirm it’s you, so nothing was changed',
     },
     sessions: {
       title: 'Signed-in devices',
@@ -354,6 +355,12 @@ export const en = {
       issue: 'Create',
       issued: 'Access token created',
       issuedAndResumed: 'Access token created, and sign-in with access tokens resumed',
+      resumeTitle: 'Resume sign-in with access tokens',
+      resumeBody:
+        'Sign-in with access tokens is paused. Creating a token that can sign in resumes it.',
+      resumeBodyExisting:
+        'Tokens marked “Sign-in allowed” before the pause will work for signing in again too.',
+      resumeConfirm: 'Resume and create',
       issueFailed: 'Couldn’t create the token',
       reauthFailed: 'Couldn’t confirm it’s you, so the token wasn’t created',
       newToken: 'New access token',

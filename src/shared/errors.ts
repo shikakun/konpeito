@@ -9,6 +9,7 @@ const ERROR_CODES = [
   'bootstrap_invalid',
   'last_credential',
   'reauth_required',
+  'sign_in_paused',
   'feed_not_found',
   'item_not_found',
   'tag_not_found',

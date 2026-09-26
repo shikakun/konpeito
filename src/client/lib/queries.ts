@@ -280,9 +280,19 @@ export async function fetchTokens() {
   return okJson(await api.tokens.$get())
 }
 
-export async function createToken(input: { name: string; canSignIn: boolean }) {
+export async function createToken(input: {
+  name: string
+  canSignIn: boolean
+  resumeSignIn: boolean
+}) {
   return okJson(
-    await api.tokens.$post({ json: { name: input.name, can_sign_in: input.canSignIn } }),
+    await api.tokens.$post({
+      json: {
+        name: input.name,
+        can_sign_in: input.canSignIn,
+        resume_sign_in: input.resumeSignIn,
+      },
+    }),
   )
 }
 

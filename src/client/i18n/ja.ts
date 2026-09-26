@@ -318,6 +318,7 @@ export const ja: Messages = {
       deleteBody: (name: string) =>
         `「${name}」を削除します。このパスキーではログインできなくなります。`,
       deleteConfirm: '削除する',
+      reauthFailed: '本人確認ができなかったため、中止しました',
     },
     sessions: {
       title: 'ログイン中の端末',
@@ -353,6 +354,12 @@ export const ja: Messages = {
       issue: '発行',
       issued: 'アクセストークンを発行しました',
       issuedAndResumed: 'アクセストークンを発行し、アクセストークンでのログインを再開しました',
+      resumeTitle: 'アクセストークンでのログインを再開',
+      resumeBody:
+        'アクセストークンでのログインは停止しています。ログイン可のアクセストークンを発行すると、ログインを再開します。',
+      resumeBodyExisting:
+        '停止する前に発行したログイン可のアクセストークンも、ふたたびログインに使えるようになります。',
+      resumeConfirm: '再開して発行する',
       issueFailed: '発行できませんでした',
       reauthFailed: '本人確認ができなかったため、発行を中止しました',
       newToken: '新しいアクセストークン',

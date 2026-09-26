@@ -56,6 +56,7 @@ import {
 import { zv } from '../../lib/validate.ts'
 import {
   hasRecentReauth,
+  reauthRequired,
   requireCookieSession,
   requireSession,
   type SessionRow,
@@ -125,8 +126,6 @@ function cookieSession(auth: AppEnv['Variables']['auth']): SessionRow {
   }
   return auth.session
 }
-
-const reauthRequired = () => apiError('reauth_required', 'Confirm with a passkey first')
 
 function projectFeed(
   feed: FeedRow & { tags?: { id: number; name: string }[] },
@@ -555,11 +554,15 @@ export const api = new Hono<AppEnv>()
   })
   .post('/tokens', requireCookieSession(), zv('json', createTokenSchema), async (c) => {
     const session = cookieSession(c.get('auth'))
-    const { name, can_sign_in: canSignIn } = c.req.valid('json')
+    const { name, can_sign_in: canSignIn, resume_sign_in: resumeSignIn } = c.req.valid('json')
+    const { paused } = await getTokenSignInState(c.env.DB)
+    // 停止前のログイン可のアクセストークンも使えるようになるので、再開の同意を明示的に求める
+    if (canSignIn && paused && !resumeSignIn) {
+      return c.json(apiError('sign_in_paused', 'Sign-in with access tokens is paused'), 409)
+    }
     if (canSignIn && !hasRecentReauth(session)) {
       return c.json(reauthRequired(), 403)
     }
-    const { paused } = await getTokenSignInState(c.env.DB)
     const secret = toBase32Lower(randomBytes(32))
     const hash = sha256Hex(secret)
     const now = nowSec()
@@ -634,6 +637,9 @@ export const api = new Hono<AppEnv>()
     })
   })
   .delete('/credentials/:id', requireCookieSession(), async (c) => {
+    if (!hasRecentReauth(cookieSession(c.get('auth')))) {
+      return c.json(reauthRequired(), 403)
+    }
     const id = c.req.param('id')
     const count = await c.env.DB.prepare('SELECT COUNT(*) AS n FROM credentials').first<{
       n: number

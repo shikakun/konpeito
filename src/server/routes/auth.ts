@@ -24,7 +24,9 @@ import { rateLimitAuth } from '../middleware/rate-limit.ts'
 import {
   clearSessionCookie,
   createSession,
+  hasRecentReauth,
   loadSession,
+  reauthRequired,
   SESSION_COOKIE,
   setSessionCookie,
 } from '../middleware/session.ts'
@@ -237,6 +239,10 @@ export const auth = new Hono<AppEnv>()
       }
       if (!session) {
         return c.json(apiError('unauthorized', 'Unauthorized'), 401)
+      }
+      // アクセストークンでログインした場合は、パスキーを失くしたときの復旧として確認なしで登録できる
+      if (session.tokenId === null && !hasRecentReauth(session)) {
+        return c.json(reauthRequired(), 403)
       }
     }
     const { rpID } = rpFromRequest(new URL(c.req.url))

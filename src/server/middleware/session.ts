@@ -129,3 +129,5 @@ export function requireCookieSession(): MiddlewareHandler<AppEnv> {
 export function hasRecentReauth(session: SessionRow): boolean {
   return session.reauthAt !== null && nowSec() - session.reauthAt <= REAUTH_TTL_SEC
 }
+
+export const reauthRequired = () => apiError('reauth_required', 'Confirm with a passkey first')

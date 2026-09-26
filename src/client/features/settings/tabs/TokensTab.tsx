@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { CirclePause, Trash2 } from 'lucide-react'
+import { CirclePause, CirclePlay, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { ConfirmDialog } from '../../../components/ui/alert-dialog.tsx'
 import { Button } from '../../../components/ui/button.tsx'
@@ -9,7 +9,7 @@ import { Field, Label } from '../../../components/ui/label.tsx'
 import { useMessages } from '../../../i18n/I18nProvider.tsx'
 import { PasskeyConfirmationError, withPasskeyConfirmation } from '../../../lib/auth.ts'
 import { formatDateTime } from '../../../lib/format.ts'
-import { errorMessage } from '../../../lib/http.ts'
+import { ApiError, errorMessage } from '../../../lib/http.ts'
 import { useNotify } from '../../../lib/notify.ts'
 import {
   createToken,
@@ -37,11 +37,13 @@ export function TokensTab() {
   const [canSignIn, setCanSignIn] = useState(false)
   const [issuing, setIssuing] = useState(false)
   const [created, setCreated] = useState<{ secret: string; canSignIn: boolean } | null>(null)
+  const [confirmingResume, setConfirmingResume] = useState(false)
   const [pending, setPending] = useState<Token | null>(null)
   const [busy, setBusy] = useState(false)
   const query = useQuery({ queryKey: queryKeys.tokens, queryFn: fetchTokens })
   const tokens = query.data?.tokens ?? []
   const signInTokenCount = tokens.filter((token) => token.can_sign_in).length
+  const signInState = useQuery({ queryKey: queryKeys.tokenSignIn, queryFn: fetchTokenSignIn })
 
   async function refresh() {
     await Promise.all([
@@ -51,16 +53,23 @@ export function TokensTab() {
     ])
   }
 
-  async function create() {
+  async function create(resumeSignIn: boolean) {
     setIssuing(true)
     try {
-      const result = await withPasskeyConfirmation(() => createToken({ name, canSignIn }))
+      const result = await withPasskeyConfirmation(() =>
+        createToken({ name, canSignIn, resumeSignIn }),
+      )
       setCreated({ secret: result.secret, canSignIn: result.can_sign_in })
       setName('')
       setCanSignIn(false)
       await refresh()
       notify(result.sign_in_resumed ? t.settings.tokens.issuedAndResumed : t.settings.tokens.issued)
     } catch (error) {
+      if (error instanceof ApiError && error.code === 'sign_in_paused') {
+        await queryClient.invalidateQueries({ queryKey: queryKeys.tokenSignIn })
+        setConfirmingResume(true)
+        return
+      }
       notify(
         error instanceof PasskeyConfirmationError
           ? t.settings.tokens.reauthFailed
@@ -70,6 +79,11 @@ export function TokensTab() {
     } finally {
       setIssuing(false)
     }
+  }
+
+  async function resumeAndCreate() {
+    await create(true)
+    setConfirmingResume(false)
   }
 
   async function copy(secret: string) {
@@ -123,7 +137,11 @@ export function TokensTab() {
           className="flex flex-col gap-4"
           onSubmit={(event) => {
             event.preventDefault()
-            void create()
+            if (canSignIn && signInState.data?.paused) {
+              setConfirmingResume(true)
+              return
+            }
+            void create(false)
           }}
         >
           <Field>
@@ -207,6 +225,25 @@ export function TokensTab() {
         icon={Trash2}
         busy={busy}
         onConfirm={remove}
+      />
+      <ConfirmDialog
+        open={confirmingResume}
+        onOpenChange={(open) => {
+          if (!open && !issuing) {
+            setConfirmingResume(false)
+          }
+        }}
+        title={t.settings.tokens.resumeTitle}
+        description={t.common.joinSentences(
+          signInTokenCount > 0
+            ? [t.settings.tokens.resumeBody, t.settings.tokens.resumeBodyExisting]
+            : [t.settings.tokens.resumeBody],
+        )}
+        confirmLabel={t.settings.tokens.resumeConfirm}
+        confirmVariant="default"
+        icon={CirclePlay}
+        busy={issuing}
+        onConfirm={resumeAndCreate}
       />
     </SettingsPanel>
   )

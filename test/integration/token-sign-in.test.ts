@@ -54,6 +54,7 @@ beforeEach(async () => {
     env.DB.prepare('DELETE FROM sessions'),
     env.DB.prepare('DELETE FROM api_tokens'),
     env.DB.prepare('DELETE FROM settings'),
+    env.DB.prepare('DELETE FROM credentials'),
   ])
 })
 
@@ -128,15 +129,25 @@ describe('managing sign-in tokens', () => {
     expect(await withReauth.json()).toMatchObject({ can_sign_in: true, sign_in_resumed: false })
   })
 
-  it('resumes sign-in when a sign-in token is issued while paused', async () => {
+  it('issues a sign-in token while paused only when asked to resume', async () => {
     await apiToken('old', { canSignIn: true })
     await env.DB.prepare(
       "INSERT INTO settings (key, value) VALUES ('token_sign_in_paused', 'true')",
     ).run()
+    const cookie = await sessionCookie({ reauthed: true })
+    const withoutResume = await send('/api/v1/tokens', {
+      method: 'POST',
+      cookie,
+      body: { name: 'new', can_sign_in: true },
+    })
+    expect(withoutResume.status).toBe(409)
+    expect(await withoutResume.json()).toMatchObject({ error: { code: 'sign_in_paused' } })
+    expect(await methods()).toEqual({ access_token: false })
+
     const res = await send('/api/v1/tokens', {
       method: 'POST',
-      cookie: await sessionCookie({ reauthed: true }),
-      body: { name: 'new', can_sign_in: true },
+      cookie,
+      body: { name: 'new', can_sign_in: true, resume_sign_in: true },
     })
     expect(await res.json()).toMatchObject({ sign_in_resumed: true })
     expect(await methods()).toEqual({ access_token: true })
@@ -221,5 +232,54 @@ describe('managing sign-in tokens', () => {
     expect((await send('/auth/reauth/options')).status).toBe(401)
     const res = await send('/auth/reauth/options', { cookie: await sessionCookie() })
     expect(res.status).toBe(200)
+  })
+})
+
+describe('managing passkeys', () => {
+  async function addCredential(id: string) {
+    await env.DB.prepare(
+      'INSERT INTO credentials (id, public_key, counter, created_at) VALUES (?, ?, 0, 1)',
+    )
+      .bind(id, new Uint8Array([1, 2, 3]))
+      .run()
+  }
+
+  it('asks for a passkey before adding one from a passkey session', async () => {
+    await addCredential('existing')
+    const withoutReauth = await send('/auth/register/options', { cookie: await sessionCookie() })
+    expect(withoutReauth.status).toBe(403)
+    expect(await withoutReauth.json()).toMatchObject({ error: { code: 'reauth_required' } })
+
+    const withReauth = await send('/auth/register/options', {
+      cookie: await sessionCookie({ reauthed: true }),
+    })
+    expect(withReauth.status).toBe(200)
+  })
+
+  it('lets a token session add a passkey without one, to recover the account', async () => {
+    await addCredential('lost')
+    const id = await apiTokenId(await apiToken('emergency', { canSignIn: true }))
+    const res = await send('/auth/register/options', {
+      cookie: await sessionCookie({ tokenId: id }),
+    })
+    expect(res.status).toBe(200)
+  })
+
+  it('asks for a passkey before deleting one, even from a token session', async () => {
+    await addCredential('first')
+    await addCredential('second')
+    const id = await apiTokenId(await apiToken('emergency', { canSignIn: true }))
+    const withoutReauth = await send('/api/v1/credentials/first', {
+      method: 'DELETE',
+      cookie: await sessionCookie({ tokenId: id }),
+    })
+    expect(withoutReauth.status).toBe(403)
+    expect(await withoutReauth.json()).toMatchObject({ error: { code: 'reauth_required' } })
+
+    const withReauth = await send('/api/v1/credentials/first', {
+      method: 'DELETE',
+      cookie: await sessionCookie({ reauthed: true }),
+    })
+    expect(withReauth.status).toBe(200)
   })
 })
