@@ -48,10 +48,8 @@ export const ja: Messages = {
     challengeFailed: 'ログインを開始できませんでした。もう一度お試しください。',
     registerChallengeFailed: 'パスキーの登録を開始できませんでした。もう一度お試しください。',
     registerVerifyFailed: 'パスキーを登録できませんでした',
-    or: 'または',
     tokenLabel: 'アクセストークン',
-    showToken: '表示',
-    hideToken: '隠す',
+    back: '戻る',
     tokenSubmit: 'アクセストークンでログイン',
     tokenFailed:
       'ログインできませんでした。アクセストークンが正しいか、ログインにも使えるアクセストークンかを確認してください。',

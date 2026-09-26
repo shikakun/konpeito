@@ -50,10 +50,8 @@ export const en = {
     challengeFailed: 'Couldn’t start signing in. Try again.',
     registerChallengeFailed: 'Couldn’t start registering the passkey. Try again.',
     registerVerifyFailed: 'Couldn’t register the passkey',
-    or: 'or',
     tokenLabel: 'Access token',
-    showToken: 'Show',
-    hideToken: 'Hide',
+    back: 'Back',
     tokenSubmit: 'Sign in with an access token',
     tokenFailed:
       'Couldn’t sign in. Check that the access token is correct and allowed for sign-in.',
