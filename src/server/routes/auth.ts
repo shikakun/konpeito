@@ -9,14 +9,16 @@ import {
   verifyAuthenticationResponse,
   verifyRegistrationResponse,
 } from '@simplewebauthn/server'
-import { Hono } from 'hono'
+import { type Context, Hono } from 'hono'
 import { getCookie } from 'hono/cookie'
 import { z } from 'zod'
 import { apiError } from '../../shared/errors.ts'
+import { findApiToken } from '../lib/api-token.ts'
 import { blobToUint8Array } from '../lib/blob.ts'
 import { nowSec, timingSafeEqual } from '../lib/crypto.ts'
 import { rpFromRequest } from '../lib/request.ts'
 import { requireUserHandle } from '../lib/settings.ts'
+import { getTokenSignInState, isTokenSignInEnabled } from '../lib/token-sign-in.ts'
 import { zv } from '../lib/validate.ts'
 import { rateLimitAuth } from '../middleware/rate-limit.ts'
 import {
@@ -66,6 +68,12 @@ const authenticationResponseSchema = z.object({
 const bootstrapQuerySchema = z.object({
   bootstrap: z.string().optional(),
 })
+
+const tokenLoginSchema = z.object({
+  token: z.string().min(1).max(200),
+})
+
+type ChallengePurpose = 'registration' | 'authentication' | 'reauth'
 
 /**
  * zodが通した値を`@simplewebauthn/server`の型に移す。
@@ -124,11 +132,7 @@ async function credentialCount(db: D1Database): Promise<number> {
   return row?.n ?? 0
 }
 
-async function saveChallenge(
-  db: D1Database,
-  challenge: string,
-  purpose: 'registration' | 'authentication',
-) {
+async function saveChallenge(db: D1Database, challenge: string, purpose: ChallengePurpose) {
   const now = nowSec()
   await db
     .prepare('INSERT INTO webauthn_challenges (challenge, purpose, expires_at) VALUES (?, ?, ?)')
@@ -139,7 +143,7 @@ async function saveChallenge(
 async function consumeChallenge(
   db: D1Database,
   challenge: string,
-  purpose: 'registration' | 'authentication',
+  purpose: ChallengePurpose,
 ): Promise<boolean> {
   const now = nowSec()
   const row = await db
@@ -169,6 +173,52 @@ async function existingCredentials(db: D1Database) {
     }
     return cred
   })
+}
+
+async function verifyPasskey(
+  c: Context<AppEnv>,
+  body: AuthenticationResponseJSON,
+  purpose: 'authentication' | 'reauth',
+): Promise<'ok' | 'unknown_credential' | 'failed'> {
+  const row = await c.env.DB.prepare(
+    'SELECT id, public_key, counter, transports FROM credentials WHERE id = ?',
+  )
+    .bind(body.id)
+    .first<{ id: string; public_key: unknown; counter: number; transports: string | null }>()
+  if (!row) {
+    return 'unknown_credential'
+  }
+  const { rpID, origin } = rpFromRequest(new URL(c.req.url))
+  const parsedTransports = row.transports
+    ? z.array(transportSchema).safeParse(JSON.parse(row.transports))
+    : null
+  const verification = await verifyAuthenticationResponse({
+    response: body,
+    expectedChallenge: async (challenge) => consumeChallenge(c.env.DB, challenge, purpose),
+    expectedOrigin: origin,
+    expectedRPID: rpID,
+    requireUserVerification: true,
+    credential: {
+      id: row.id,
+      publicKey: blobToUint8Array(row.public_key),
+      counter: row.counter,
+      ...(parsedTransports?.success ? { transports: parsedTransports.data } : {}),
+    },
+  })
+  if (!verification.verified) {
+    return 'failed'
+  }
+  await c.env.DB.prepare(
+    'UPDATE credentials SET counter = ?, last_used_at = ?, backed_up = ? WHERE id = ?',
+  )
+    .bind(
+      verification.authenticationInfo.newCounter,
+      nowSec(),
+      verification.authenticationInfo.credentialBackedUp ? 1 : 0,
+      row.id,
+    )
+    .run()
+  return 'ok'
 }
 
 export const auth = new Hono<AppEnv>()
@@ -262,52 +312,67 @@ export const auth = new Hono<AppEnv>()
     return c.json(options)
   })
   .post('/login/verify', zv('json', authenticationResponseSchema), async (c) => {
-    const body = toAuthenticationResponse(c.req.valid('json'))
-    const row = await c.env.DB.prepare(
-      'SELECT id, public_key, counter, transports FROM credentials WHERE id = ?',
+    const result = await verifyPasskey(
+      c,
+      toAuthenticationResponse(c.req.valid('json')),
+      'authentication',
     )
-      .bind(body.id)
-      .first<{ id: string; public_key: unknown; counter: number; transports: string | null }>()
-    if (!row) {
+    if (result === 'unknown_credential') {
       console.log({ event: 'auth.fail', reason: 'unknown_credential' })
       return c.json(apiError('unauthorized', 'Unknown credential'), 401)
     }
-    const { rpID, origin } = rpFromRequest(new URL(c.req.url))
-    const parsedTransports = row.transports
-      ? z.array(transportSchema).safeParse(JSON.parse(row.transports))
-      : null
-    const verification = await verifyAuthenticationResponse({
-      response: body,
-      expectedChallenge: async (challenge) =>
-        consumeChallenge(c.env.DB, challenge, 'authentication'),
-      expectedOrigin: origin,
-      expectedRPID: rpID,
-      requireUserVerification: true,
-      credential: {
-        id: row.id,
-        publicKey: blobToUint8Array(row.public_key),
-        counter: row.counter,
-        ...(parsedTransports?.success ? { transports: parsedTransports.data } : {}),
-      },
-    })
-    if (!verification.verified) {
+    if (result === 'failed') {
       console.log({ event: 'auth.fail', reason: 'authentication' })
       return c.json(apiError('forbidden', 'Verification failed'), 403)
     }
-    const now = nowSec()
-    await c.env.DB.prepare(
-      'UPDATE credentials SET counter = ?, last_used_at = ?, backed_up = ? WHERE id = ?',
-    )
-      .bind(
-        verification.authenticationInfo.newCounter,
-        now,
-        verification.authenticationInfo.credentialBackedUp ? 1 : 0,
-        row.id,
-      )
-      .run()
     const raw = await createSession(c.env.DB, c.req.header('user-agent') ?? null)
     setSessionCookie(c, raw)
     console.log({ event: 'auth.login', via: 'login' })
+    return c.json({ ok: true })
+  })
+  .get('/reauth/options', async (c) => {
+    const session = await loadSession(c.env.DB, getCookie(c, SESSION_COOKIE))
+    if (!session) {
+      return c.json(apiError('unauthorized', 'Unauthorized'), 401)
+    }
+    const { rpID } = rpFromRequest(new URL(c.req.url))
+    const options = await generateAuthenticationOptions({
+      rpID,
+      userVerification: 'required',
+      allowCredentials: await existingCredentials(c.env.DB),
+    })
+    await saveChallenge(c.env.DB, options.challenge, 'reauth')
+    return c.json(options)
+  })
+  .post('/reauth/verify', zv('json', authenticationResponseSchema), async (c) => {
+    const session = await loadSession(c.env.DB, getCookie(c, SESSION_COOKIE))
+    if (!session) {
+      return c.json(apiError('unauthorized', 'Unauthorized'), 401)
+    }
+    const result = await verifyPasskey(c, toAuthenticationResponse(c.req.valid('json')), 'reauth')
+    if (result !== 'ok') {
+      console.log({ event: 'auth.fail', reason: 'reauth' })
+      return c.json(apiError('forbidden', 'Verification failed'), 403)
+    }
+    await c.env.DB.prepare('UPDATE sessions SET reauth_at = ? WHERE id = ?')
+      .bind(nowSec(), session.id)
+      .run()
+    return c.json({ ok: true })
+  })
+  .get('/methods', async (c) => {
+    const state = await getTokenSignInState(c.env.DB)
+    return c.json({ access_token: isTokenSignInEnabled(state) })
+  })
+  .post('/token/login', zv('json', tokenLoginSchema), async (c) => {
+    const enabled = isTokenSignInEnabled(await getTokenSignInState(c.env.DB))
+    const token = enabled ? await findApiToken(c.env.DB, c.req.valid('json').token) : null
+    if (token?.can_sign_in !== 1) {
+      console.log({ event: 'auth.fail', reason: 'token' })
+      return c.json(apiError('unauthorized', 'Invalid access token'), 401)
+    }
+    const raw = await createSession(c.env.DB, c.req.header('user-agent') ?? null, token.id)
+    setSessionCookie(c, raw)
+    console.log({ event: 'auth.login', via: 'token' })
     return c.json({ ok: true })
   })
   .post('/logout', async (c) => {

@@ -14,16 +14,39 @@ export function toBody(value: string | Uint8Array): BodyInit {
   return buffer
 }
 
-export async function sessionCookie(): Promise<string> {
-  return `${SESSION_COOKIE}=${await createSession(env.DB, 'test')}`
+export async function sessionCookie(
+  options: { tokenId?: number; reauthed?: boolean } = {},
+): Promise<string> {
+  const raw = await createSession(env.DB, 'test', options.tokenId ?? null)
+  if (options.reauthed) {
+    await env.DB.prepare('UPDATE sessions SET reauth_at = ? WHERE id = ?')
+      .bind(nowSec(), sha256Hex(raw))
+      .run()
+  }
+  return `${SESSION_COOKIE}=${raw}`
 }
 
-export async function apiToken(name = 'test'): Promise<string> {
+export async function apiToken(
+  name = 'test',
+  options: { canSignIn?: boolean } = {},
+): Promise<string> {
   const secret = toBase32Lower(randomBytes(32))
-  await env.DB.prepare('INSERT INTO api_tokens (name, secret_hash, created_at) VALUES (?, ?, ?)')
-    .bind(name, sha256Hex(secret), nowSec())
+  await env.DB.prepare(
+    'INSERT INTO api_tokens (name, secret_hash, created_at, can_sign_in) VALUES (?, ?, ?, ?)',
+  )
+    .bind(name, sha256Hex(secret), nowSec(), options.canSignIn ? 1 : 0)
     .run()
   return secret
+}
+
+export async function apiTokenId(secret: string): Promise<number> {
+  const row = await env.DB.prepare('SELECT id FROM api_tokens WHERE secret_hash = ?')
+    .bind(sha256Hex(secret))
+    .first<{ id: number }>()
+  if (!row) {
+    throw new Error('No such access token')
+  }
+  return row.id
 }
 
 export async function revokeApiToken(secret: string): Promise<void> {

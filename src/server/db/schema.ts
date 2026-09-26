@@ -132,6 +132,8 @@ export const sessions = sqliteTable('sessions', {
   expiresAt: integer('expires_at').notNull(),
   lastSeenAt: integer('last_seen_at').notNull(),
   userAgent: text('user_agent'),
+  tokenId: integer('token_id').references(() => apiTokens.id),
+  reauthAt: integer('reauth_at'),
 })
 
 export const apiTokens = sqliteTable('api_tokens', {
@@ -141,6 +143,7 @@ export const apiTokens = sqliteTable('api_tokens', {
   createdAt: integer('created_at').notNull(),
   lastUsedAt: integer('last_used_at'),
   revokedAt: integer('revoked_at'),
+  canSignIn: integer('can_sign_in').notNull().default(0),
 })
 
 export const settings = sqliteTable('settings', {

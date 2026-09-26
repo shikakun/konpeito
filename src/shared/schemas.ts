@@ -125,6 +125,11 @@ export const settingsPatchSchema: z.ZodType<SettingsPatch> = z
 
 export const createTokenSchema = z.object({
   name: z.string().min(1).max(100),
+  can_sign_in: z.boolean().default(false),
+})
+
+export const tokenSignInPatchSchema = z.object({
+  paused: z.boolean(),
 })
 
 export const fullContentQuerySchema = z.object({

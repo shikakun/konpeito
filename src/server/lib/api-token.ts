@@ -7,13 +7,14 @@ export type ApiTokenRow = {
   secret_hash: string
   last_used_at: number | null
   revoked_at: number | null
+  can_sign_in: number
 }
 
 export async function findApiToken(db: D1Database, secret: string): Promise<ApiTokenRow | null> {
   const hash = sha256Hex(secret)
   const row = await db
     .prepare(
-      'SELECT id, secret_hash, last_used_at, revoked_at FROM api_tokens WHERE secret_hash = ? AND revoked_at IS NULL',
+      'SELECT id, secret_hash, last_used_at, revoked_at, can_sign_in FROM api_tokens WHERE secret_hash = ? AND revoked_at IS NULL',
     )
     .bind(hash)
     .first<ApiTokenRow>()

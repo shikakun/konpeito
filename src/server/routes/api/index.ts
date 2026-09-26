@@ -18,6 +18,7 @@ import {
   readSchema,
   reorderIdsSchema,
   settingsPatchSchema,
+  tokenSignInPatchSchema,
 } from '../../../shared/schemas.ts'
 import type { FeedRow } from '../../db/queries/feeds.ts'
 import {
@@ -47,8 +48,18 @@ import { parsePositiveInt, parseRef, resolveId } from '../../lib/ids.ts'
 import { signedIconQuery } from '../../lib/image-proxy.ts'
 import { insertWithPublicId, PublicIdError, tagPublicId } from '../../lib/public-id.ts'
 import { getSettings, parseSettingsRows, settingsStatement } from '../../lib/settings.ts'
+import {
+  deleteTokenSessionsStatement,
+  getTokenSignInState,
+  setPausedStatement,
+} from '../../lib/token-sign-in.ts'
 import { zv } from '../../lib/validate.ts'
-import { requireSession } from '../../middleware/session.ts'
+import {
+  hasRecentReauth,
+  requireCookieSession,
+  requireSession,
+  type SessionRow,
+} from '../../middleware/session.ts'
 import type { OpmlFeed } from '../../services/opml.ts'
 import type { AppEnv } from '../../types.ts'
 
@@ -107,6 +118,15 @@ function withRowId(table: IdTable): MiddlewareHandler<AppEnv> {
     await next()
   }
 }
+
+function cookieSession(auth: AppEnv['Variables']['auth']): SessionRow {
+  if (auth.kind !== 'session') {
+    throw new Error('A cookie session is required')
+  }
+  return auth.session
+}
+
+const reauthRequired = () => apiError('reauth_required', 'Confirm with a passkey first')
 
 function projectFeed(
   feed: FeedRow & { tags?: { id: number; name: string }[] },
@@ -514,50 +534,88 @@ export const api = new Hono<AppEnv>()
     const settings = await getSettings(c.env.DB)
     return c.json(settings)
   })
-  .get('/tokens', async (c) => {
+  .get('/tokens', requireCookieSession(), async (c) => {
+    const session = cookieSession(c.get('auth'))
     const rows = await c.env.DB.prepare(
-      'SELECT id, name, created_at, last_used_at, revoked_at FROM api_tokens WHERE revoked_at IS NULL ORDER BY id',
+      'SELECT id, name, created_at, last_used_at, can_sign_in FROM api_tokens WHERE revoked_at IS NULL ORDER BY id',
     ).all<{
       id: number
       name: string
       created_at: number
       last_used_at: number | null
-      revoked_at: number | null
+      can_sign_in: number
     }>()
-    return c.json({ tokens: rows.results })
+    return c.json({
+      tokens: rows.results.map((row) => ({
+        ...row,
+        can_sign_in: row.can_sign_in === 1,
+        signed_in_here: row.id === session.tokenId,
+      })),
+    })
   })
-  .post('/tokens', zv('json', createTokenSchema), async (c) => {
+  .post('/tokens', requireCookieSession(), zv('json', createTokenSchema), async (c) => {
+    const session = cookieSession(c.get('auth'))
+    const { name, can_sign_in: canSignIn } = c.req.valid('json')
+    if (canSignIn && !hasRecentReauth(session)) {
+      return c.json(reauthRequired(), 403)
+    }
+    const { paused } = await getTokenSignInState(c.env.DB)
     const secret = toBase32Lower(randomBytes(32))
     const hash = sha256Hex(secret)
     const now = nowSec()
-    const result = await c.env.DB.prepare(
-      'INSERT INTO api_tokens (name, secret_hash, created_at) VALUES (?, ?, ?)',
+    const insert = c.env.DB.prepare(
+      'INSERT INTO api_tokens (name, secret_hash, created_at, can_sign_in) VALUES (?, ?, ?, ?)',
+    ).bind(name, hash, now, canSignIn ? 1 : 0)
+    const resumed = canSignIn && paused
+    const [result] = await c.env.DB.batch(
+      resumed ? [insert, setPausedStatement(c.env.DB, false)] : [insert],
     )
-      .bind(c.req.valid('json').name, hash, now)
-      .run()
     return c.json(
       {
-        id: result.meta.last_row_id,
-        name: c.req.valid('json').name,
+        id: result?.meta.last_row_id ?? 0,
+        name,
         secret,
         created_at: now,
+        can_sign_in: canSignIn,
+        sign_in_resumed: resumed,
       },
       201,
     )
   })
-  .delete('/tokens/:id', async (c) => {
+  .delete('/tokens/:id', requireCookieSession(), async (c) => {
+    const session = cookieSession(c.get('auth'))
     const id = parsePositiveInt(c.req.param('id'))
     if (id === null) {
       return c.json(apiError('validation_error', 'Invalid id'), 400)
     }
-    await c.env.DB.prepare(
-      'UPDATE api_tokens SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL',
-    )
-      .bind(nowSec(), id)
-      .run()
-    return c.json({ ok: true })
+    await c.env.DB.batch([
+      c.env.DB.prepare(
+        'UPDATE api_tokens SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL',
+      ).bind(nowSec(), id),
+      deleteTokenSessionsStatement(c.env.DB, id),
+    ])
+    return c.json({ ok: true, signed_out: session.tokenId === id })
   })
-  .get('/credentials', async (c) => {
+  .get('/token-sign-in', requireCookieSession(), async (c) => {
+    const session = cookieSession(c.get('auth'))
+    const state = await getTokenSignInState(c.env.DB)
+    return c.json({ ...state, signed_in_with_token: session.tokenId !== null })
+  })
+  .put('/token-sign-in', requireCookieSession(), zv('json', tokenSignInPatchSchema), async (c) => {
+    const session = cookieSession(c.get('auth'))
+    const { paused } = c.req.valid('json')
+    if (!paused && !hasRecentReauth(session)) {
+      return c.json(reauthRequired(), 403)
+    }
+    await c.env.DB.batch(
+      paused
+        ? [setPausedStatement(c.env.DB, true), deleteTokenSessionsStatement(c.env.DB)]
+        : [setPausedStatement(c.env.DB, false)],
+    )
+    const state = await getTokenSignInState(c.env.DB)
+    return c.json({ ...state, signed_out: paused && session.tokenId !== null })
+  })
+  .get('/credentials', requireCookieSession(), async (c) => {
     const rows = await c.env.DB.prepare(
       'SELECT id, nickname, device_type, backed_up, created_at, last_used_at FROM credentials ORDER BY created_at',
     ).all<{
@@ -575,7 +633,7 @@ export const api = new Hono<AppEnv>()
       })),
     })
   })
-  .delete('/credentials/:id', async (c) => {
+  .delete('/credentials/:id', requireCookieSession(), async (c) => {
     const id = c.req.param('id')
     const count = await c.env.DB.prepare('SELECT COUNT(*) AS n FROM credentials').first<{
       n: number
@@ -586,26 +644,28 @@ export const api = new Hono<AppEnv>()
     await c.env.DB.prepare('DELETE FROM credentials WHERE id = ?').bind(id).run()
     return c.json({ ok: true })
   })
-  .get('/sessions', async (c) => {
-    const auth = c.get('auth')
-    const currentId = auth.kind === 'session' ? auth.session.id : null
+  .get('/sessions', requireCookieSession(), async (c) => {
+    const session = cookieSession(c.get('auth'))
     const rows = await c.env.DB.prepare(
-      'SELECT id, created_at, expires_at, last_seen_at, user_agent FROM sessions ORDER BY last_seen_at DESC',
+      `SELECT s.id, s.created_at, s.expires_at, s.last_seen_at, s.user_agent, t.name AS token_name
+       FROM sessions s LEFT JOIN api_tokens t ON t.id = s.token_id
+       ORDER BY s.last_seen_at DESC`,
     ).all<{
       id: string
       created_at: number
       expires_at: number
       last_seen_at: number
       user_agent: string | null
+      token_name: string | null
     }>()
     return c.json({
       sessions: rows.results.map((row) => ({
         ...row,
-        current: row.id === currentId,
+        current: row.id === session.id,
       })),
     })
   })
-  .delete('/sessions/:id', async (c) => {
+  .delete('/sessions/:id', requireCookieSession(), async (c) => {
     const id = c.req.param('id')
     await c.env.DB.prepare('DELETE FROM sessions WHERE id = ?').bind(id).run()
     return c.json({ ok: true })
