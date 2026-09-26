@@ -551,13 +551,13 @@ async function d1Execute(state, sql) {
     const args = ['d1', 'execute', 'DB', '--remote', '--json', '-c', configPath, '--command', sql]
     const result = await tryWrangler(args)
     if (result.code !== 0) {
-      if (/no such column/i.test(result.output)) {
+      if (/no such column|has no column named/i.test(result.output)) {
         throw new CliError(
           `${state.worker} is older than this CLI. Run \`konpeito update --name ${state.worker}\` first.`,
         )
       }
       throw new CliError(
-        `Could not reach the database of ${state.worker}.\n\n${result.output.trim()}`,
+        `Could not run the query on the database of ${state.worker}.\n\n${result.output.trim()}`,
       )
     }
     const start = result.stdout.indexOf('[')
