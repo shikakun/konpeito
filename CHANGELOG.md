@@ -1,5 +1,14 @@
 # @shikakun/konpeito
 
+## 0.5.0
+
+### Minor Changes
+
+- [#16](https://github.com/shikakun/konpeito/pull/16) [`5a3267f`](https://github.com/shikakun/konpeito/commit/5a3267fe87278541b408caff4f86448408981f60) Thanks [@shikakun](https://github.com/shikakun)! - アクセストークンでログインできるようにした
+  
+  - サーバーのログイン画面から、ログインを許可したアクセストークンでログインできるようになりました。あわせて、アクセストークンの発行時に「ログインにも使えるようにする」権限を選べるようにしました。これまで発行されたアクセストークンはログインには使用できない権限として扱います。
+  - CLIに`token create`、`token list`、`token delete`コマンドを追加し、CLIからもアクセストークンの発行や管理ができるようになりました。これにより、もしパスキーを失ってもアクセストークンを作成してログインできます。
+
 ## 0.4.0
 
 ### Minor Changes
