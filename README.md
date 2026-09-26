@@ -6,7 +6,7 @@
 
 Konpeito (金平糖) is a feed reader that runs on Cloudflare Workers and D1. It consists of an API server and a web frontend.
 
-It makes a few deliberate trade-offs: each server serves a single user, and passkeys are the only way to sign in. The result is simple and lightweight. It covers the essentials: RSS, Atom, RDF, and JSON Feed subscriptions; full-text extraction with Mozilla Readability; an image proxy; and full-text search. It is also compatible with the Google Reader API, so it can serve as a backend for clients such as Reeder Classic.
+It makes a few deliberate trade-offs: each server serves a single user, who signs in with a passkey. The result is simple and lightweight. It covers the essentials: RSS, Atom, RDF, and JSON Feed subscriptions; full-text extraction with Mozilla Readability; an image proxy; and full-text search. It is also compatible with the Google Reader API, so it can serve as a backend for clients such as Reeder Classic.
 
 See it in action in the live demo: [sample.konpeito.shikakun.com](https://sample.konpeito.shikakun.com)
 
